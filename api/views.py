@@ -1,3 +1,4 @@
+import os
 import random
 from datetime import datetime
 
@@ -348,14 +349,16 @@ class SeabornStats(View):
             plotter_stats = Plotter.objects.all()
         if self.request.user in dealer_group.user_set.all():
             plotter_stats = Plotter.objects.filter(creator=self.request.user.id)
-        if self.request.user not in admin_group.user_set.all() and self.request.user not in dealer_group.user_set.all():
+        if self.request.user not in admin_group.user_set.all() and self.request.user not in dealer_group.user_set.all() and not self.request.user.is_superuser:
             plotter_stats = Plotter.objects.filter(users=self.request.user.id)
         if not self.request.user.username:
             return HttpResponseForbidden()
         df = pd.DataFrame(plotter_stats.values('id', 'title', 'whole_amount'))
         gr = sb.catplot(x='title', y='whole_amount', data=df, kind='bar', aspect=3)
-        sol = random.randint(0, 10000)
-        date = datetime.now()
-        gr.savefig(f"{MEDIA_ROOT}/{sol}-Stats-{date}.pdf", dpi=500)
-        response = FileResponse(open(f"{MEDIA_ROOT}/{sol}-Stats-{date}.pdf", 'rb'), content_type="application/pdf")
+        sol = random.random()
+        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        new_path = f"{MEDIA_ROOT}/{datetime.now().strftime('%Y')}/{datetime.now().strftime('%m')}/{datetime.now().strftime('%d')}/api"
+        os.makedirs(os.path.join(f'{MEDIA_ROOT}', new_path), exist_ok=True)
+        gr.savefig(f"{new_path}/{sol}-Stats-{date}.pdf", dpi=500)
+        response = FileResponse(open(f"{new_path}/{sol}-Stats-{date}.pdf", 'rb'), content_type="application/pdf")
         return response
