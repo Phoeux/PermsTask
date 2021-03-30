@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_swagger',
     'rest_framework.authtoken',
+    'notebook',
 
     'api',
 
@@ -120,6 +121,9 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.1/howto/static-files/
+_PATH = os.path.abspath(os.path.dirname(__file__))
+
+MEDIA_ROOT = os.path.join(_PATH, 'files', 'statistics')
 
 STATIC_URL = '/static/'
 

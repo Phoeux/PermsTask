@@ -15,4 +15,5 @@ router.register('pattern_obj_perms', views.PatternUserObjectPermissionModelView,
 
 urlpatterns = [
     path('', include((router.urls, 'api'))),
+    path('seaborn/', views.SeabornStats.as_view(), name='seaborn'),
 ]

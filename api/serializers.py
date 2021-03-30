@@ -31,6 +31,14 @@ class UserSerializerDealer(serializers.ModelSerializer):
         fields = ['id', 'username', 'password', 'parent', 'children']
 
 
+class PlotterSerializerAdmin(serializers.ModelSerializer):
+    # creator = serializers.IntegerField(source='creator.id')
+
+    class Meta:
+        model = Plotter
+        fields = '__all__'
+
+
 class PlotterSerializer(serializers.ModelSerializer):
     # creator = serializers.IntegerField(source='creator.id')
     whole_amount = serializers.IntegerField(read_only=True)

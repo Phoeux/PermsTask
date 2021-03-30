@@ -1,5 +1,12 @@
+import random
+from datetime import datetime
+
+import pandas as pd
+import seaborn as sb
 from django.contrib.auth.models import Group, Permission
 from django.db.models import Subquery, Sum
+from django.http import HttpResponse, response, FileResponse, HttpResponseForbidden
+from django.views import View
 
 from guardian.shortcuts import assign_perm, remove_perm
 
@@ -7,11 +14,12 @@ from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 
+from TestPermTask.settings import MEDIA_ROOT
 from api.models import CustomUser, Plotter, Pattern, PlotterUserObjectPermission, PatternUserObjectPermission, \
     PlotterGroupObjectPermission, PlotterPattern
 from api.serializers import PlotterSerializer, PatternSerializer, UserSerializerDealer, PermissionSerializer, \
     PlotterUserObjectPermissionSerializer, PatternUserObjectPermissionSerializer, UserSerializerAdmin, \
-    PlotterPatternStatSerializer, PlotterPatternStatSerializerAdmin
+    PlotterPatternStatSerializer, PlotterPatternStatSerializerAdmin, PlotterSerializerAdmin
 
 
 class UserModelView(viewsets.ModelViewSet):
@@ -99,6 +107,15 @@ class PlotterModelView(viewsets.ModelViewSet):
             queryset = self.request.user.plotters_users
             return queryset
 
+    def get_serializer(self, *args, **kwargs):
+        if self.request.user in Group.objects.get(
+                name='administrator').user_set.all() or self.request.user.is_superuser:
+            serializer_class = PlotterSerializerAdmin
+        else:
+            serializer_class = self.get_serializer_class()
+        kwargs.setdefault('context', self.get_serializer_context())
+        return serializer_class(*args, **kwargs)
+
     def list(self, request, *args, **kwargs):
         admin_group = Group.objects.get(name='administrator')
         perm = Permission.objects.filter(codename=self.permission_required[0])
@@ -138,6 +155,24 @@ class PlotterModelView(viewsets.ModelViewSet):
             return Response(f'creator must be {self.request.user}, but not other, your id is {self.request.user.id}',
                             status=status.HTTP_400_BAD_REQUEST)
         return Response("forbidden", status=status.HTTP_403_FORBIDDEN)
+
+    def update(self, request, *args, **kwargs):
+        dealer_group = Group.objects.get(name='dealer')
+        administrator_group = Group.objects.get(name='administrator')
+        if self.request.user in dealer_group.user_set.all() or \
+                self.request.user in administrator_group.user_set.all() or self.request.user.is_superuser:
+            partial = kwargs.pop('partial', False)
+            instance = self.get_object()
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+
+            if getattr(instance, '_prefetched_objects_cache', None):
+                # If 'prefetch_related' has been applied to a queryset, we need to
+                # forcibly invalidate the prefetch cache on the instance.
+                instance._prefetched_objects_cache = {}
+
+            return Response(serializer.data)
 
 
 class PatternModelView(viewsets.ModelViewSet):
@@ -303,3 +338,24 @@ class PatternUserObjectPermissionModelView(viewsets.ModelViewSet):
     serializer_class = PatternUserObjectPermissionSerializer
     queryset = PatternUserObjectPermission.objects
     permission_classes = [IsAuthenticated, IsAdminUser]
+
+
+class SeabornStats(View):
+    def get(self, request, *args, **kwargs):
+        admin_group, created = Group.objects.get_or_create(name='administrator')
+        dealer_group, created = Group.objects.get_or_create(name='dealer')
+        if self.request.user in admin_group.user_set.all() or self.request.user.is_superuser:
+            plotter_stats = Plotter.objects.all()
+        if self.request.user in dealer_group.user_set.all():
+            plotter_stats = Plotter.objects.filter(creator=self.request.user.id)
+        if self.request.user not in admin_group.user_set.all() and self.request.user not in dealer_group.user_set.all():
+            plotter_stats = Plotter.objects.filter(users=self.request.user.id)
+        if not self.request.user.username:
+            return HttpResponseForbidden()
+        df = pd.DataFrame(plotter_stats.values('id', 'title', 'whole_amount'))
+        gr = sb.catplot(x='title', y='whole_amount', data=df, kind='bar', aspect=3)
+        sol = random.randint(0, 10000)
+        date = datetime.now()
+        gr.savefig(f"{MEDIA_ROOT}/{sol}-Stats-{date}.pdf", dpi=500)
+        response = FileResponse(open(f"{MEDIA_ROOT}/{sol}-Stats-{date}.pdf", 'rb'), content_type="application/pdf")
+        return response
