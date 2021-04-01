@@ -177,7 +177,7 @@ class TestAPI(APITestCase):
         len(response.data) == get_user_model().objects.all().count()
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, msg=response.data)
-        # User update/delete users
+        # User can't update/delete users
         url = reverse('api:user-detail', kwargs={
             'pk': get_user_model().objects.filter(username=data['username']).values_list('pk', flat=True)[0]})
         data_3_upd = {

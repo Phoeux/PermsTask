@@ -24,7 +24,7 @@ SECRET_KEY = 'su401u)pit=jv5i*0m!=)a-7iaf(y&f66j-^54x&fbv!uw2$0e'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*', '192.168.0.104']
 
 # Application definition
 
@@ -153,3 +153,8 @@ REST_FRAMEWORK = {
 
 
 }
+
+INTERNAL_IPS = [
+    '127.0.0.1',
+    '192.168.0.104'
+]

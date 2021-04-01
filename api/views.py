@@ -2,12 +2,14 @@ import os
 import random
 from datetime import datetime
 
+import cv2
 import pandas as pd
 import seaborn as sb
 from django.contrib.auth.models import Group, Permission
-from django.db.models import Subquery, Sum
-from django.http import HttpResponse, response, FileResponse, HttpResponseForbidden
+from django.db.models import Sum
+from django.http import FileResponse, HttpResponseForbidden, StreamingHttpResponse, HttpResponseServerError
 from django.views import View
+from django.views.decorators import gzip
 
 from guardian.shortcuts import assign_perm, remove_perm
 
@@ -61,31 +63,29 @@ class UserModelView(viewsets.ModelViewSet):
         administrator_group, created = Group.objects.get_or_create(name='administrator')
         dealer_group, created = Group.objects.get_or_create(name='dealer')
         if self.request.user in administrator_group.user_set.all() and administrator_group.permissions.filter(
-            codename='add_customuser') or self.request.user.is_superuser or self.request.user in dealer_group.user_set.all():
+                codename='add_customuser') or self.request.user.is_superuser or self.request.user in dealer_group.user_set.all():
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             self.perform_create(serializer)
             headers = self.get_success_headers(serializer.data)
+            customuser = CustomUser.objects.get(username=serializer.data['username'])
 
             if self.request.user in administrator_group.user_set.all() and administrator_group.permissions.filter(
                     codename='add_customuser') or self.request.user.is_superuser:
                 if request.data['administrator']:
                     """вывести в отдельные функции"""
                     administrator_group.permissions.set(Permission.objects.all())
-                    user = CustomUser.objects.get(username=request.data['username'])
-                    administrator_group.user_set.add(user)
+                    # user = CustomUser.objects.get(username=request.data['username'])
+                    administrator_group.user_set.add(customuser)
                 if request.data['dealer']:
-                    user = CustomUser.objects.get(username=request.data['username'])
-                    user.groups.add(dealer_group)
-            customuser = CustomUser.objects.get(username=serializer.data['username'])
+                    # user = CustomUser.objects.get(username=request.data['username'])
+                    customuser.groups.add(dealer_group)
+
             if self.request.user in dealer_group.user_set.all():
                 assign_perm('view_customuser', self.request.user, customuser)
                 assign_perm('change_customuser', self.request.user, customuser)
-                assign_perm('add_customuser', self.request.user, customuser)
-            # assign_perm('view_customuser', administrator_group, customuser_subq)
-            # assign_perm('change_customuser', administrator_group, customuser_subq)
-            # assign_perm('add_customuser', administrator_group, customuser_subq)
-            # assign_perm('delete_customuser', administrator_group, customuser_subq)
+                # assign_perm('add_customuser', self.request.user, customuser)
+
             return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
         return Response("forbidden", status=status.HTTP_403_FORBIDDEN)
 
@@ -94,7 +94,7 @@ class PlotterModelView(viewsets.ModelViewSet):
     serializer_class = PlotterSerializer
     queryset = Plotter.objects
     permission_classes = [IsAuthenticated]
-    permission_required = ['view_plotter']
+    permission_required = ['view_plotter', 'change_plotter']
 
     def get_queryset(self):
         if self.request.user in Group.objects.get(
@@ -174,6 +174,7 @@ class PlotterModelView(viewsets.ModelViewSet):
                 instance._prefetched_objects_cache = {}
 
             return Response(serializer.data)
+        return Response("forbidden", status=status.HTTP_403_FORBIDDEN)
 
 
 class PatternModelView(viewsets.ModelViewSet):
@@ -232,7 +233,8 @@ class PlotterPatternModelView(viewsets.ModelViewSet):
     serializer_class = PlotterPatternStatSerializer
     queryset = PlotterPattern.objects
     permission_classes = [IsAuthenticated]
-    permission_required = ['view_plotterpattern', 'add_plotterpattern', 'change_plotterpattern', 'delete_plotterpattern']
+    permission_required = ['view_plotterpattern', 'add_plotterpattern', 'change_plotterpattern',
+                           'delete_plotterpattern']
 
     def get_queryset(self):
         if self.request.user in Group.objects.get(
@@ -258,7 +260,7 @@ class PlotterPatternModelView(viewsets.ModelViewSet):
         if self.request.user not in Group.objects.get(name='dealer').user_set.all():
             admin_group = Group.objects.get(name='administrator')
             if self.request.user in admin_group.user_set.all() and admin_group.permissions.filter(
-                    codename=self.permission_required[0]) or self.request.user.is_superuser or\
+                    codename=self.permission_required[0]) or self.request.user.is_superuser or \
                     self.request.user.pattern_user and self.request.user.patternuserobjectpermission_set:
                 queryset = self.filter_queryset(self.get_queryset())
 
@@ -285,7 +287,8 @@ class PlotterPatternModelView(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         admin_group = Group.objects.get(name='administrator')
         if self.request.user in admin_group.user_set.all() and admin_group.permissions.filter(
-                codename=self.permission_required[2]) or self.request.user.is_superuser or self.request.user.pattern_user and self.request.user.patternuserobjectpermission_set:
+                codename=self.permission_required[
+                    2]) or self.request.user.is_superuser or self.request.user.pattern_user and self.request.user.patternuserobjectpermission_set:
             partial = kwargs.pop('partial', False)
             instance = self.get_object()
             serializer = self.get_serializer(instance, data=request.data, partial=partial)
@@ -349,16 +352,67 @@ class SeabornStats(View):
             plotter_stats = Plotter.objects.all()
         if self.request.user in dealer_group.user_set.all():
             plotter_stats = Plotter.objects.filter(creator=self.request.user.id)
-        if self.request.user not in admin_group.user_set.all() and self.request.user not in dealer_group.user_set.all() and not self.request.user.is_superuser:
+        if self.request.user not in admin_group.user_set.all() and self.request.user not in dealer_group.user_set.all() \
+                and not self.request.user.is_superuser:
             plotter_stats = Plotter.objects.filter(users=self.request.user.id)
         if not self.request.user.username:
             return HttpResponseForbidden()
         df = pd.DataFrame(plotter_stats.values('id', 'title', 'whole_amount'))
         gr = sb.catplot(x='title', y='whole_amount', data=df, kind='bar', aspect=3)
         sol = random.random()
-        date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        new_path = f"{MEDIA_ROOT}/{datetime.now().strftime('%Y')}/{datetime.now().strftime('%m')}/{datetime.now().strftime('%d')}/api"
+        date = datetime.now()
+        new_path = f"{MEDIA_ROOT}/{date.strftime('%Y')}/{date.strftime('%m')}/{date.strftime('%d')}/api"
         os.makedirs(os.path.join(f'{MEDIA_ROOT}', new_path), exist_ok=True)
-        gr.savefig(f"{new_path}/{sol}-Stats-{date}.pdf", dpi=500)
-        response = FileResponse(open(f"{new_path}/{sol}-Stats-{date}.pdf", 'rb'), content_type="application/pdf")
+        gr.savefig(f"{new_path}/{sol}-Stats-{date.strftime('%Y-%m-%d %H:%M:%S')}.pdf", dpi=500)
+        response = FileResponse(open(f"{new_path}/{sol}-Stats-{date.strftime('%Y-%m-%d %H:%M:%S')}.pdf", 'rb'),
+                                content_type="application/pdf")
         return response
+
+
+class WebStream(View):
+    def gen_frames(self):
+        camera = cv2.VideoCapture(0)
+        while True:
+            success, frame = camera.read()  # read the camera frame
+
+            if not success:
+                break
+            else:
+                ret, buffer = cv2.imencode('.jpg', frame)
+                frame = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            camera.release()
+            return Response('Stream is over')
+
+    def get(self, request):
+        return StreamingHttpResponse(self.gen_frames(), content_type="multipart/x-mixed-replace;boundary=frame")
+
+
+class VideoCamera(object):
+    def __init__(self):
+        self.video = cv2.VideoCapture(0)
+
+    def __del__(self):
+        self.video.release()
+
+    def get_frame(self):
+        ret, image = self.video.read()
+        ret, jpeg = cv2.imencode('.jpg', image)
+        return jpeg.tobytes()
+
+
+def gen(camera):
+    while True:
+        frame = camera.get_frame()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+
+
+@gzip.gzip_page
+def index(request):
+    try:
+        return StreamingHttpResponse(gen(VideoCamera()), content_type="multipart/x-mixed-replace;boundary=frame")
+    except HttpResponseServerError as e:
+        print("aborted")
